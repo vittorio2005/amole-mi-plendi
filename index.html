@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070306">
+  <meta name="description" content="Un cuore che prende forma con Ti amo in 20 lingue.">
+  <title>Ti amo · in ogni lingua</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html { height: 100%; background: #070306; }
+    body {
+      margin: 0; min-height: 100vh; min-height: 100dvh; overflow: hidden;
+      background: radial-gradient(ellipse at 50% 47%, #18080c 0%, #0b0407 49%, #050305 100%);
+      color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    main {
+      min-height: 100vh; min-height: 100dvh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: max(16px, env(safe-area-inset-top)) 8px max(20px, env(safe-area-inset-bottom));
+      gap: 4px;
+    }
+    .heart-wrap {
+      width: min(96vw, 680px); max-height: min(78dvh, 625px);
+      aspect-ratio: 1 / 1.02;
+      display: grid; place-items: center;
+      flex: 0 1 auto; min-height: 0;
+      position: relative;
+    }
+    canvas { display: block; width: 100%; height: 100%; cursor: pointer; touch-action: manipulation; }
+    button {
+      position: fixed; bottom: max(21px, calc(env(safe-area-inset-bottom) + 14px)); left: 50%;
+      transform: translateX(-50%); background: rgba(38, 16, 22, .75);
+      border: 1px solid rgba(255, 119, 122, .25);
+      border-radius: 999px; color: #efb5b5; padding: 11px 19px; font: 500 13px/1.2 inherit;
+      font-family: inherit; font-size: 13px; font-weight: 500;
+      cursor: pointer; -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+      transition: background .2s ease, border-color .2s ease, transform .2s ease;
+      white-space: nowrap;
+    }
+    button:active { background: #47232d; transform: translateX(-50%) scale(.97); }
+    button:focus-visible { outline: 2px solid #ff828a; outline-offset: 3px; }
+    @media (max-height: 500px) and (orientation: landscape) {
+      .heart-wrap { width: min(75dvh, 78vw); max-height: 82dvh; aspect-ratio: 1 / 1; }
+      button { left: auto; right: 14px; transform: none; bottom: 16px; }
+      button:active { transform: scale(.97); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="heart-wrap">
+      <canvas id="heart" role="img" aria-label="Un cuore formato da Ti amo in venti lingue diverse. Tocca per rivedere l'animazione."></canvas>
+    </div>
+  </main>
+  <button id="replay" type="button" aria-label="Rivedi l'animazione del cuore">↻ &nbsp;Rivedi l'animazione</button>
+
+  <script>
+    (() => {
+      'use strict';
+      const LOVE = [
+        'Ti amo', 'I love you', "Je t’aime", 'Te amo', 'Ich liebe dich',
+        'Eu te amo', 'Seni seviyorum', 'Ik hou van jou', 'Jag älskar dig',
+        'Kocham cię', 'Σ’ αγαπώ', 'Я тебя люблю', 'Я тебе кохаю',
+        '愛してる', '我爱你', '사랑해', 'Aku cinta kamu', 'Anh yêu em',
+        'أحبك', 'ฉันรักเธอ'
+      ];
+      const COLORS = ['#ff7267', '#fa5d57', '#ff8577', '#f7665f', '#ff6963', '#ed5959'];
+      const canvas = document.getElementById('heart');
+      const replay = document.getElementById('replay');
+      const wrap = document.querySelector('.heart-wrap');
+      const ctx = canvas.getContext('2d', { alpha: true });
+      if (!ctx) return;
+
+      // Seme deterministico: ad ogni replay il disegno resta riconoscibile.
+      function randomGenerator(seed) {
+        let s = seed >>> 0;
+        return () => {
+          s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+          return s / 4294967296;
+        };
+      }
+      let entries = [];
+      let index = 0;
+      let lastFrame = 0;
+      let requestId = 0;
+      let stepMs = 50;
+      let logicalWidth = 0;
+      let logicalHeight = 0;
+      let fontSize = 14;
+      let font = '';
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+      // Forma classica: x=16sin³t, y=13cos t−5cos2t−2cos3t−cos4t.
+      function outline(width, height) {
+        const scale = Math.min((width - 20) / 34, (height - 20) / 32);
+        const centerX = width / 2;
+        const centerY = height / 2 - 2.5 * scale;
+        const points = [];
+        for (let i = 0; i <= 900; i++) {
+          const t = 2 * Math.PI * i / 900;
+          const x = 16 * Math.sin(t) ** 3;
+          const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+          points.push([centerX + x * scale, centerY - y * scale]);
+        }
+        return { points, scale };
+      }
+
+      // Interseca la sagoma con una riga: funziona anche nei due lobi superiori.
+      function spansAt(points, y) {
+        const xs = [];
+        for (let i = 1; i < points.length; i++) {
+          const [x1,y1] = points[i-1], [x2,y2] = points[i];
+          if ((y1 <= y && y < y2) || (y2 <= y && y < y1)) {
+            xs.push(x1 + (y - y1) * (x2 - x1) / (y2 - y1));
+          }
+        }
+        xs.sort((a,b) => a-b);
+        const result = [];
+        for (let i=0; i+1<xs.length; i+=2) result.push([xs[i], xs[i+1]]);
+        return result;
+      }
+      function overlap(first, second) {
+        const result = [];
+        for (const a of first) for (const b of second) {
+          const x1 = Math.max(a[0],b[0]), x2 = Math.min(a[1],b[1]);
+          if (x2 > x1) result.push([x1,x2]);
+        }
+        return result;
+      }
+
+      function layout() {
+        const rect = wrap.getBoundingClientRect();
+        logicalWidth = Math.max(1, Math.round(rect.width));
+        logicalHeight = Math.max(1, Math.round(rect.height));
+        // DPR limitato per non consumare troppa memoria sui telefoni Retina.
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.round(logicalWidth * dpr);
+        canvas.height = Math.round(logicalHeight * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+
+        const {points,scale} = outline(logicalWidth, logicalHeight);
+        fontSize = Math.max(10, Math.min(21, Math.round(scale * 1.22)));
+        font = `700 ${fontSize}px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", sans-serif`;
+        ctx.font = font;
+        ctx.textBaseline = 'middle';
+        const metrics = LOVE.map(text => [text, ctx.measureText(text).width]);
+        const rand = randomGenerator(20261113);
+        const minY = Math.min(...points.map(p => p[1]));
+        const maxY = Math.max(...points.map(p => p[1]));
+        const lineHeight = fontSize * 1.29;
+        const halfLine = fontSize * .50;
+        const result = [];
+        let row = 0;
+        for (let y = minY + lineHeight*.65; y < maxY - lineHeight*.45; y += lineHeight) {
+          let spans = overlap(spansAt(points, y), spansAt(points, y-halfLine));
+          spans = overlap(spans, spansAt(points, y+halfLine));
+          for (const [left,right] of spans) {
+            let x = left + 2.5;
+            const limit = right - 2.5;
+            let position = 0;
+            while (x < limit) {
+              const available = metrics.filter(v => v[1] <= limit-x);
+              if (available.length === 0) break;
+              const choice = available[Math.floor(rand()*available.length)];
+              const color = COLORS[Math.floor(rand()*COLORS.length)];
+              result.push({x,y,text:choice[0],color,offset:rand()});
+              x += choice[1] + Math.max(4, fontSize*.35) + rand()*fontSize*.24;
+              position++;
+              if (position > 30) break;
+            }
+          }
+          row++;
+        }
+        // Da destra verso sinistra come nel video, ma con comparsa leggermente irregolare.
+        result.sort((a,b) => (b.x + b.offset*scale*4) - (a.x + a.offset*scale*4));
+        entries = result;
+        // Circa 5-7 secondi, indipendentemente dalla dimensione dello schermo.
+        stepMs = Math.max(25, Math.min(85, 5800 / Math.max(1,entries.length)));
+        return entries;
+      }
+
+      function draw(item) {
+        ctx.font = font;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.shadowColor = 'rgba(240, 55, 60, .45)';
+        ctx.shadowBlur = fontSize * .60;
+        ctx.fillStyle = item.color;
+        ctx.fillText(item.text, item.x, item.y);
+        ctx.shadowBlur = 0;
+      }
+      function drawAll(upTo) {
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+        for (let i=0; i<upTo; i++) draw(entries[i]);
+      }
+      function tick(now) {
+        if (!lastFrame) lastFrame = now;
+        const elapsed = Math.min(1000, now-lastFrame);
+        const count = Math.max(1, Math.floor(elapsed/stepMs));
+        if (elapsed >= stepMs) {
+          lastFrame = now - (elapsed % stepMs);
+          for (let j=0; j<count && index<entries.length; j++) draw(entries[index++]);
+        }
+        if (index<entries.length) requestId = requestAnimationFrame(tick);
+        else requestId = 0;
+      }
+      function restart() {
+        if (requestId) cancelAnimationFrame(requestId);
+        requestId = 0;
+        index = 0;
+        lastFrame = 0;
+        ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+        if (reduceMotion.matches) {
+          drawAll(entries.length);
+          index = entries.length;
+        } else {
+          requestId = requestAnimationFrame(tick);
+        }
+      }
+      function resize() {
+        if (requestId) cancelAnimationFrame(requestId);
+        layout();
+        restart();
+      }
+      let resizeTimer;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(resize, 120);
+      }, {passive:true});
+      replay.addEventListener('click', restart);
+      canvas.addEventListener('click', restart);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+          if (requestId) cancelAnimationFrame(requestId);
+          requestId = 0;
+        } else if (index<entries.length && !reduceMotion.matches) {
+          lastFrame = 0;
+          requestId = requestAnimationFrame(tick);
+        }
+      });
+      reduceMotion.addEventListener('change', restart);
+      resize();
+    })();
+  </script>
+</body>
+</html>
